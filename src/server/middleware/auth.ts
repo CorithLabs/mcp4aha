@@ -1,56 +1,107 @@
-import { Request, Response, NextFunction } from "express";
-import { ConfigService } from "../../core/config.js";
+import { Request, Response, NextFunction } from 'express';
+import { timingSafeEqual } from 'crypto';
+import { databaseService } from '../../core/database/database.js';
 
 /**
- * Bearer token authentication middleware for SSE mode
- * Validates Authorization header with Bearer token format
+ * Extend Express Request to carry per-request Aha credentials.
  */
-export function bearerAuth(req: Request, res: Response, next: NextFunction) {
-  const config = ConfigService.getConfig();
-  const authToken = config.authToken || process.env.MCP_AUTH_TOKEN;
-  
-  // If no auth token is configured, allow all requests (backward compatibility)
-  if (!authToken) {
-    return next();
+declare global {
+  namespace Express {
+    interface Request {
+      ahaApiKey?: string;
+    }
   }
-  
+}
+
+/**
+ * Load the MCP auth token from server_config, falling back to env var.
+ * Returns null if neither is set (server not configured yet).
+ */
+async function loadMcpAuthToken(): Promise<string | null> {
+  try {
+    const dbToken = await databaseService.getConfig('mcp_auth_token');
+    if (dbToken) return dbToken;
+  } catch {
+    // DB unavailable — fall through to env var
+  }
+  return process.env.MCP_AUTH_TOKEN || null;
+}
+
+/**
+ * Timing-safe string comparison to prevent timing attacks.
+ */
+function safeCompare(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  return timingSafeEqual(bufA, bufB);
+}
+
+/**
+ * Bearer token authentication middleware.
+ *
+ * 1. Loads the MCP auth token from server_config (or MCP_AUTH_TOKEN env var).
+ * 2. Returns 503 if the server has no token configured yet.
+ * 3. Returns 401 if the Authorization header is missing or the token is invalid.
+ * 4. On success: calls next() and attaches req.ahaApiKey from X-Aha-Api-Key header.
+ */
+export async function bearerAuth(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const configuredToken = await loadMcpAuthToken();
+
+  // Server not yet configured
+  if (!configuredToken) {
+    res.status(503).json({
+      error: 'Server not configured',
+      message: 'No MCP auth token configured. Open the portal to set up the server.',
+    });
+    return;
+  }
+
   const authHeader = req.headers.authorization;
-  
-  // Check if Authorization header is present
+
   if (!authHeader) {
-    return res.status(401).json({
-      error: "Authorization header required",
-      message: "Please provide a valid Bearer token in the Authorization header"
+    res.status(401).json({
+      error: 'Authorization header required',
+      message: "Please provide a valid Bearer token in the Authorization header",
     });
+    return;
   }
-  
-  // Check if it follows Bearer token format
+
   if (!authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({
-      error: "Invalid authorization format",
-      message: "Authorization header must use Bearer token format: 'Bearer <token>'"
+    res.status(401).json({
+      error: 'Invalid authorization format',
+      message: "Authorization header must use Bearer token format: 'Bearer <token>'",
     });
+    return;
   }
-  
-  // Extract token from header
-  const token = authHeader.substring(7); // Remove 'Bearer ' prefix
-  
-  // Validate token
-  if (token !== authToken) {
-    return res.status(401).json({
-      error: "Invalid token",
-      message: "The provided Bearer token is invalid"
+
+  const incomingToken = authHeader.substring(7);
+
+  if (!safeCompare(incomingToken, configuredToken)) {
+    res.status(401).json({
+      error: 'Invalid token',
+      message: 'The provided Bearer token is invalid',
     });
+    return;
   }
-  
-  // Token is valid, proceed to next middleware
+
+  // Extract per-request Aha API key from X-Aha-Api-Key header
+  const ahaApiKey = req.headers['x-aha-api-key'] as string | undefined;
+  if (ahaApiKey) {
+    req.ahaApiKey = ahaApiKey;
+  }
+
   next();
 }
 
 /**
- * Check if authentication is enabled
+ * Check if authentication is enabled (token configured).
  */
-export function isAuthEnabled(): boolean {
-  const config = ConfigService.getConfig();
-  return !!(config.authToken || process.env.MCP_AUTH_TOKEN);
+export async function isAuthEnabled(): Promise<boolean> {
+  const token = await loadMcpAuthToken();
+  return !!token;
 }
