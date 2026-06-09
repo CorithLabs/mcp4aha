@@ -1,16 +1,46 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
-import * as services from "./services/index.js";
 import { databaseService } from './database/database.js';
 import { registerSyncTools } from "./tools/sync-tools.js";
 import { registerEmbeddingTools } from "./tools/embedding-tools.js";
 import { log } from "./logger.js";
-
+import { createAhaService, MissingCredentialsError, ConfigurationError } from "./services/aha-service-factory.js";
 
 /**
- * Register all tools with the MCP server
- *
- * @param server The MCP server instance
+ * Helper: resolve AhaService for the current request.
+ * Reads the Aha API key from the MCP request context (meta.ahaApiKey).
+ * Returns a structured MCP error content block if credentials are missing.
+ */
+async function getAhaService(meta?: { ahaApiKey?: string }) {
+  const apiKey = meta?.ahaApiKey || process.env.AHA_TOKEN || '';
+  return createAhaService(apiKey);
+}
+
+/**
+ * Wrap a tool handler so credential errors produce structured MCP error responses
+ * instead of crashing the server.
+ */
+function withCredentials<T>(
+  meta: { ahaApiKey?: string } | undefined,
+  fn: (service: Awaited<ReturnType<typeof createAhaService>>) => Promise<T>,
+): Promise<T | { content: Array<{ type: 'text'; text: string }>; isError: true }> {
+  return getAhaService(meta)
+    .then(fn)
+    .catch((err: Error) => {
+      if (err instanceof MissingCredentialsError || err instanceof ConfigurationError) {
+        return {
+          content: [{ type: 'text' as const, text: err.message }],
+          isError: true as const,
+        };
+      }
+      throw err;
+    });
+}
+
+/**
+ * Register all tools with the MCP server.
+ * Each handler calls createAhaService() to get a per-request AhaService
+ * instance with the credentials passed by Claude Desktop.
  */
 export function registerTools(server: McpServer) {
 
@@ -22,957 +52,483 @@ export function registerTools(server: McpServer) {
       featureId: z.string().describe("ID of the feature"),
       body: z.string().describe("Comment body")
     },
-    async (params: { featureId: string; body: string }) => {
-      try {
-        const comment = await services.AhaService.createFeatureComment(params.featureId, params.body);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Comment created successfully:\n\n${JSON.stringify(comment, null, 2)}`
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error creating comment: ${error instanceof Error ? error.message : String(error)}`
-            }
-          ],
-          isError: true
-        };
-      }
+    async (params: { featureId: string; body: string }, { meta }: any = {}) => {
+      return withCredentials(meta, async (service) => {
+        try {
+          const comment = await service.createFeatureComment(params.featureId, params.body);
+          return { content: [{ type: "text" as const, text: `Comment created successfully:\n\n${JSON.stringify(comment, null, 2)}` }] };
+        } catch (error) {
+          return { content: [{ type: "text" as const, text: `Error creating comment: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        }
+      });
     }
   );
 
-  // ============================
-  // RELATIONSHIP/ASSOCIATION TOOLS
-  // ============================
-
-  // Associate feature with epic tool
+  // Associate feature with epic
   server.tool(
     "aha_associate_feature_with_epic",
     "Associate a feature with an epic in Aha.io",
-    {
-      featureId: z.string().describe("ID of the feature"),
-      epicId: z.string().describe("ID or name of the epic")
-    },
-    async (params: { featureId: string; epicId: string }) => {
-      try {
-        const feature = await services.AhaService.associateFeatureWithEpic(params.featureId, params.epicId);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Feature ${params.featureId} successfully associated with epic ${params.epicId}:\n\n${JSON.stringify(feature, null, 2)}`
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error associating feature with epic: ${error instanceof Error ? error.message : String(error)}`
-            }
-          ],
-          isError: true
-        };
-      }
+    { featureId: z.string().describe("ID of the feature"), epicId: z.string().describe("ID or name of the epic") },
+    async (params: { featureId: string; epicId: string }, { meta }: any = {}) => {
+      return withCredentials(meta, async (service) => {
+        try {
+          const feature = await service.associateFeatureWithEpic(params.featureId, params.epicId);
+          return { content: [{ type: "text" as const, text: `Feature associated with epic:\n\n${JSON.stringify(feature, null, 2)}` }] };
+        } catch (error) {
+          return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        }
+      });
     }
   );
 
-  // Move feature to release tool
+  // Move feature to release
   server.tool(
     "aha_move_feature_to_release",
     "Move a feature to a different release in Aha.io",
-    {
-      featureId: z.string().describe("ID of the feature"),
-      releaseId: z.string().describe("ID or key of the target release")
-    },
-    async (params: { featureId: string; releaseId: string }) => {
-      try {
-        const feature = await services.AhaService.moveFeatureToRelease(params.featureId, params.releaseId);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Feature ${params.featureId} successfully moved to release ${params.releaseId}:\n\n${JSON.stringify(feature, null, 2)}`
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error moving feature to release: ${error instanceof Error ? error.message : String(error)}`
-            }
-          ],
-          isError: true
-        };
-      }
+    { featureId: z.string().describe("ID of the feature"), releaseId: z.string().describe("ID or key of the target release") },
+    async (params: { featureId: string; releaseId: string }, { meta }: any = {}) => {
+      return withCredentials(meta, async (service) => {
+        try {
+          const feature = await service.moveFeatureToRelease(params.featureId, params.releaseId);
+          return { content: [{ type: "text" as const, text: `Feature moved to release:\n\n${JSON.stringify(feature, null, 2)}` }] };
+        } catch (error) {
+          return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        }
+      });
     }
   );
 
-  // Associate feature with goals tool
+  // Associate feature with goals
   server.tool(
     "aha_associate_feature_with_goals",
     "Associate a feature with multiple goals in Aha.io",
-    {
-      featureId: z.string().describe("ID of the feature"),
-      goalIds: z.array(z.number()).describe("Array of goal IDs to associate with the feature")
-    },
-    async (params: { featureId: string; goalIds: number[] }) => {
-      try {
-        const feature = await services.AhaService.associateFeatureWithGoals(params.featureId, params.goalIds);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Feature ${params.featureId} successfully associated with goals ${params.goalIds.join(', ')}:\n\n${JSON.stringify(feature, null, 2)}`
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error associating feature with goals: ${error instanceof Error ? error.message : String(error)}`
-            }
-          ],
-          isError: true
-        };
-      }
+    { featureId: z.string().describe("ID of the feature"), goalIds: z.array(z.number()).describe("Array of goal IDs") },
+    async (params: { featureId: string; goalIds: number[] }, { meta }: any = {}) => {
+      return withCredentials(meta, async (service) => {
+        try {
+          const feature = await service.associateFeatureWithGoals(params.featureId, params.goalIds);
+          return { content: [{ type: "text" as const, text: `Feature associated with goals:\n\n${JSON.stringify(feature, null, 2)}` }] };
+        } catch (error) {
+          return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        }
+      });
     }
   );
 
-  // Update feature tags tool
+  // Update feature tags
   server.tool(
     "aha_update_feature_tags",
     "Update tags for a feature in Aha.io",
-    {
-      featureId: z.string().describe("ID of the feature"),
-      tags: z.array(z.string()).describe("Array of tag strings to associate with the feature")
-    },
-    async (params: { featureId: string; tags: string[] }) => {
-      try {
-        const feature = await services.AhaService.updateFeatureTags(params.featureId, params.tags);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Feature ${params.featureId} tags successfully updated to [${params.tags.join(', ')}]:\n\n${JSON.stringify(feature, null, 2)}`
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error updating feature tags: ${error instanceof Error ? error.message : String(error)}`
-            }
-          ],
-          isError: true
-        };
-      }
+    { featureId: z.string().describe("ID of the feature"), tags: z.array(z.string()).describe("Array of tag strings") },
+    async (params: { featureId: string; tags: string[] }, { meta }: any = {}) => {
+      return withCredentials(meta, async (service) => {
+        try {
+          const feature = await service.updateFeatureTags(params.featureId, params.tags);
+          return { content: [{ type: "text" as const, text: `Tags updated:\n\n${JSON.stringify(feature, null, 2)}` }] };
+        } catch (error) {
+          return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        }
+      });
     }
   );
 
-  // Create epic in product tool
+  // Create epic in product
   server.tool(
     "aha_create_epic_in_product",
     "Create an epic within a specific product in Aha.io",
     {
       productId: z.string().describe("ID of the product"),
-      epicData: z.object({
-        epic: z.object({
-          name: z.string().describe("Name of the epic"),
-          description: z.string().optional().describe("Description of the epic")
-        }).describe("Epic data object")
-      }).describe("Epic creation data")
+      epicData: z.object({ epic: z.object({ name: z.string(), description: z.string().optional() }) })
     },
-    async (params: { productId: string; epicData: any }) => {
-      try {
-        const epic = await services.AhaService.createEpicInProduct(params.productId, params.epicData);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Epic successfully created in product ${params.productId}:\n\n${JSON.stringify(epic, null, 2)}`
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error creating epic in product: ${error instanceof Error ? error.message : String(error)}`
-            }
-          ],
-          isError: true
-        };
-      }
+    async (params: { productId: string; epicData: any }, { meta }: any = {}) => {
+      return withCredentials(meta, async (service) => {
+        try {
+          const epic = await service.createEpicInProduct(params.productId, params.epicData);
+          return { content: [{ type: "text" as const, text: `Epic created:\n\n${JSON.stringify(epic, null, 2)}` }] };
+        } catch (error) {
+          return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        }
+      });
     }
   );
 
-  // Create epic in release tool
+  // Create epic in release
   server.tool(
     "aha_create_epic_in_release",
     "Create an epic within a specific release in Aha.io",
     {
       releaseId: z.string().describe("ID of the release"),
-      epicData: z.object({
-        epic: z.object({
-          name: z.string().describe("Name of the epic"),
-          description: z.string().optional().describe("Description of the epic")
-        }).describe("Epic data object")
-      }).describe("Epic creation data")
+      epicData: z.object({ epic: z.object({ name: z.string(), description: z.string().optional() }) })
     },
-    async (params: { releaseId: string; epicData: any }) => {
-      try {
-        const epic = await services.AhaService.createEpicInRelease(params.releaseId, params.epicData);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Epic successfully created in release ${params.releaseId}:\n\n${JSON.stringify(epic, null, 2)}`
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error creating epic in release: ${error instanceof Error ? error.message : String(error)}`
-            }
-          ],
-          isError: true
-        };
-      }
+    async (params: { releaseId: string; epicData: any }, { meta }: any = {}) => {
+      return withCredentials(meta, async (service) => {
+        try {
+          const epic = await service.createEpicInRelease(params.releaseId, params.epicData);
+          return { content: [{ type: "text" as const, text: `Epic created:\n\n${JSON.stringify(epic, null, 2)}` }] };
+        } catch (error) {
+          return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        }
+      });
     }
   );
 
-  // Create initiative in product tool
+  // Create initiative in product
   server.tool(
     "aha_create_initiative_in_product",
     "Create an initiative within a specific product in Aha.io",
     {
       productId: z.string().describe("ID of the product"),
-      initiativeData: z.object({
-        initiative: z.object({
-          name: z.string().describe("Name of the initiative"),
-          description: z.string().optional().describe("Description of the initiative")
-        }).describe("Initiative data object")
-      }).describe("Initiative creation data")
+      initiativeData: z.object({ initiative: z.object({ name: z.string(), description: z.string().optional() }) })
     },
-    async (params: { productId: string; initiativeData: any }) => {
-      try {
-        const initiative = await services.AhaService.createInitiativeInProduct(params.productId, params.initiativeData);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Initiative successfully created in product ${params.productId}:\n\n${JSON.stringify(initiative, null, 2)}`
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error creating initiative in product: ${error instanceof Error ? error.message : String(error)}`
-            }
-          ],
-          isError: true
-        };
-      }
+    async (params: { productId: string; initiativeData: any }, { meta }: any = {}) => {
+      return withCredentials(meta, async (service) => {
+        try {
+          const initiative = await service.createInitiativeInProduct(params.productId, params.initiativeData);
+          return { content: [{ type: "text" as const, text: `Initiative created:\n\n${JSON.stringify(initiative, null, 2)}` }] };
+        } catch (error) {
+          return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        }
+      });
     }
   );
 
-  // ============================
-  // FEATURE CRUD TOOLS (PHASE 8A.1)
-  // ============================
-
-  // Create feature tool
+  // Create feature
   server.tool(
     "aha_create_feature",
     "Create a feature within a specific release in Aha.io",
     {
       releaseId: z.string().describe("ID of the release"),
-      featureData: z.object({
-        feature: z.object({
-          name: z.string().describe("Name of the feature"),
-          description: z.string().optional().describe("Description of the feature")
-        }).describe("Feature data object")
-      }).describe("Feature creation data")
+      featureData: z.object({ feature: z.object({ name: z.string(), description: z.string().optional() }) })
     },
-    async (params: { releaseId: string; featureData: any }) => {
-      try {
-        const feature = await services.AhaService.createFeature(params.releaseId, params.featureData);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Feature successfully created in release ${params.releaseId}:\n\n${JSON.stringify(feature, null, 2)}`
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error creating feature: ${error instanceof Error ? error.message : String(error)}`
-            }
-          ],
-          isError: true
-        };
-      }
+    async (params: { releaseId: string; featureData: any }, { meta }: any = {}) => {
+      return withCredentials(meta, async (service) => {
+        try {
+          const feature = await service.createFeature(params.releaseId, params.featureData);
+          return { content: [{ type: "text" as const, text: `Feature created:\n\n${JSON.stringify(feature, null, 2)}` }] };
+        } catch (error) {
+          return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        }
+      });
     }
   );
 
-  // Update feature tool
+  // Update feature
   server.tool(
     "aha_update_feature",
     "Update a feature in Aha.io",
     {
       featureId: z.string().describe("ID of the feature"),
-      featureData: z.object({
-        feature: z.object({
-          name: z.string().optional().describe("Name of the feature"),
-          description: z.string().optional().describe("Description of the feature")
-        }).describe("Feature data object")
-      }).describe("Feature update data")
+      featureData: z.object({ feature: z.object({ name: z.string().optional(), description: z.string().optional() }) })
     },
-    async (params: { featureId: string; featureData: any }) => {
-      try {
-        const feature = await services.AhaService.updateFeature(params.featureId, params.featureData);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Feature ${params.featureId} successfully updated:\n\n${JSON.stringify(feature, null, 2)}`
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error updating feature: ${error instanceof Error ? error.message : String(error)}`
-            }
-          ],
-          isError: true
-        };
-      }
+    async (params: { featureId: string; featureData: any }, { meta }: any = {}) => {
+      return withCredentials(meta, async (service) => {
+        try {
+          const feature = await service.updateFeature(params.featureId, params.featureData);
+          return { content: [{ type: "text" as const, text: `Feature updated:\n\n${JSON.stringify(feature, null, 2)}` }] };
+        } catch (error) {
+          return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        }
+      });
     }
   );
 
-  // Delete feature tool
+  // Delete feature
   server.tool(
     "aha_delete_feature",
     "Delete a feature in Aha.io",
-    {
-      featureId: z.string().describe("ID of the feature")
-    },
-    async (params: { featureId: string }) => {
-      try {
-        await services.AhaService.deleteFeature(params.featureId);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Feature ${params.featureId} successfully deleted`
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error deleting feature: ${error instanceof Error ? error.message : String(error)}`
-            }
-          ],
-          isError: true
-        };
-      }
+    { featureId: z.string().describe("ID of the feature") },
+    async (params: { featureId: string }, { meta }: any = {}) => {
+      return withCredentials(meta, async (service) => {
+        try {
+          await service.deleteFeature(params.featureId);
+          return { content: [{ type: "text" as const, text: `Feature ${params.featureId} deleted` }] };
+        } catch (error) {
+          return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        }
+      });
     }
   );
 
-  // Update feature progress tool
+  // Update feature progress
   server.tool(
     "aha_update_feature_progress",
     "Update a feature's progress in Aha.io",
-    {
-      featureId: z.string().describe("ID of the feature"),
-      progress: z.number().min(0).max(100).describe("Progress percentage (0-100)")
-    },
-    async (params: { featureId: string; progress: number }) => {
-      try {
-        const feature = await services.AhaService.updateFeatureProgress(params.featureId, params.progress);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Feature ${params.featureId} progress updated to ${params.progress}%:\n\n${JSON.stringify(feature, null, 2)}`
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error updating feature progress: ${error instanceof Error ? error.message : String(error)}`
-            }
-          ],
-          isError: true
-        };
-      }
+    { featureId: z.string(), progress: z.number().min(0).max(100) },
+    async (params: { featureId: string; progress: number }, { meta }: any = {}) => {
+      return withCredentials(meta, async (service) => {
+        try {
+          const feature = await service.updateFeatureProgress(params.featureId, params.progress);
+          return { content: [{ type: "text" as const, text: `Progress updated:\n\n${JSON.stringify(feature, null, 2)}` }] };
+        } catch (error) {
+          return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        }
+      });
     }
   );
 
-  // Update feature score tool
+  // Update feature score
   server.tool(
     "aha_update_feature_score",
     "Update a feature's score in Aha.io",
-    {
-      featureId: z.string().describe("ID of the feature"),
-      score: z.number().describe("Score value")
-    },
-    async (params: { featureId: string; score: number }) => {
-      try {
-        const feature = await services.AhaService.updateFeatureScore(params.featureId, params.score);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Feature ${params.featureId} score updated to ${params.score}:\n\n${JSON.stringify(feature, null, 2)}`
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error updating feature score: ${error instanceof Error ? error.message : String(error)}`
-            }
-          ],
-          isError: true
-        };
-      }
+    { featureId: z.string(), score: z.number() },
+    async (params: { featureId: string; score: number }, { meta }: any = {}) => {
+      return withCredentials(meta, async (service) => {
+        try {
+          const feature = await service.updateFeatureScore(params.featureId, params.score);
+          return { content: [{ type: "text" as const, text: `Score updated:\n\n${JSON.stringify(feature, null, 2)}` }] };
+        } catch (error) {
+          return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        }
+      });
     }
   );
 
-  // Update feature custom fields tool
+  // Update feature custom fields
   server.tool(
     "aha_update_feature_custom_fields",
     "Update a feature's custom fields in Aha.io",
-    {
-      featureId: z.string().describe("ID of the feature"),
-      customFields: z.object({}).describe("Custom fields data")
-    },
-    async (params: { featureId: string; customFields: any }) => {
-      try {
-        await services.AhaService.updateFeatureCustomFields(params.featureId, params.customFields);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Feature ${params.featureId} custom fields successfully updated`
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error updating feature custom fields: ${error instanceof Error ? error.message : String(error)}`
-            }
-          ],
-          isError: true
-        };
-      }
+    { featureId: z.string(), customFields: z.object({}) },
+    async (params: { featureId: string; customFields: any }, { meta }: any = {}) => {
+      return withCredentials(meta, async (service) => {
+        try {
+          await service.updateFeatureCustomFields(params.featureId, params.customFields);
+          return { content: [{ type: "text" as const, text: `Custom fields updated for feature ${params.featureId}` }] };
+        } catch (error) {
+          return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        }
+      });
     }
   );
 
-  // ============================
-  // EPIC CRUD TOOLS (PHASE 8A.2)
-  // ============================
-
-  // Update epic tool
+  // Update epic
   server.tool(
     "aha_update_epic",
     "Update an epic in Aha.io",
     {
-      epicId: z.string().describe("ID of the epic"),
-      epicData: z.object({
-        epic: z.object({
-          name: z.string().optional().describe("Name of the epic"),
-          description: z.string().optional().describe("Description of the epic")
-        }).describe("Epic data object")
-      }).describe("Epic update data")
+      epicId: z.string(),
+      epicData: z.object({ epic: z.object({ name: z.string().optional(), description: z.string().optional() }) })
     },
-    async (params: { epicId: string; epicData: any }) => {
-      try {
-        const epic = await services.AhaService.updateEpic(params.epicId, params.epicData);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Epic ${params.epicId} successfully updated:\n\n${JSON.stringify(epic, null, 2)}`
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error updating epic: ${error instanceof Error ? error.message : String(error)}`
-            }
-          ],
-          isError: true
-        };
-      }
+    async (params: { epicId: string; epicData: any }, { meta }: any = {}) => {
+      return withCredentials(meta, async (service) => {
+        try {
+          const epic = await service.updateEpic(params.epicId, params.epicData);
+          return { content: [{ type: "text" as const, text: `Epic updated:\n\n${JSON.stringify(epic, null, 2)}` }] };
+        } catch (error) {
+          return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        }
+      });
     }
   );
 
-  // Delete epic tool
+  // Delete epic
   server.tool(
     "aha_delete_epic",
     "Delete an epic in Aha.io",
-    {
-      epicId: z.string().describe("ID of the epic")
-    },
-    async (params: { epicId: string }) => {
-      try {
-        await services.AhaService.deleteEpic(params.epicId);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Epic ${params.epicId} successfully deleted`
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error deleting epic: ${error instanceof Error ? error.message : String(error)}`
-            }
-          ],
-          isError: true
-        };
-      }
+    { epicId: z.string() },
+    async (params: { epicId: string }, { meta }: any = {}) => {
+      return withCredentials(meta, async (service) => {
+        try {
+          await service.deleteEpic(params.epicId);
+          return { content: [{ type: "text" as const, text: `Epic ${params.epicId} deleted` }] };
+        } catch (error) {
+          return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        }
+      });
     }
   );
 
-  // ============================
-  // IDEA CRUD TOOLS (PHASE 8A.3)
-  // ============================
-
-  // Create idea tool
+  // Create idea
   server.tool(
     "aha_create_idea",
     "Create an idea in a product in Aha.io",
     {
-      productId: z.string().describe("ID of the product"),
-      ideaData: z.object({
-        idea: z.object({
-          name: z.string().describe("Name of the idea"),
-          description: z.string().optional().describe("Description of the idea"),
-          skip_portal: z.boolean().optional().describe("Skip portal submission (default: false)")
-        }).describe("Idea data object")
-      }).describe("Idea creation data")
+      productId: z.string(),
+      ideaData: z.object({ idea: z.object({ name: z.string(), description: z.string().optional(), skip_portal: z.boolean().optional() }) })
     },
-    async (params: { productId: string; ideaData: any }) => {
-      try {
-        const idea = await services.AhaService.createIdea(params.productId, params.ideaData);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Idea successfully created in product ${params.productId}:\n\n${JSON.stringify(idea, null, 2)}`
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error creating idea: ${error instanceof Error ? error.message : String(error)}`
-            }
-          ],
-          isError: true
-        };
-      }
+    async (params: { productId: string; ideaData: any }, { meta }: any = {}) => {
+      return withCredentials(meta, async (service) => {
+        try {
+          const idea = await service.createIdea(params.productId, params.ideaData);
+          return { content: [{ type: "text" as const, text: `Idea created:\n\n${JSON.stringify(idea, null, 2)}` }] };
+        } catch (error) {
+          return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        }
+      });
     }
   );
 
-  // Create idea with category tool
+  // Create idea with category
   server.tool(
     "aha_create_idea_with_category",
     "Create an idea with a category in a product in Aha.io",
     {
-      productId: z.string().describe("ID of the product"),
-      ideaData: z.object({
-        idea: z.object({
-          name: z.string().describe("Name of the idea"),
-          description: z.string().optional().describe("Description of the idea"),
-          category: z.string().describe("Category for the idea"),
-          skip_portal: z.boolean().optional().describe("Skip portal submission (default: false)")
-        }).describe("Idea data object")
-      }).describe("Idea creation data with category")
+      productId: z.string(),
+      ideaData: z.object({ idea: z.object({ name: z.string(), description: z.string().optional(), category: z.string(), skip_portal: z.boolean().optional() }) })
     },
-    async (params: { productId: string; ideaData: any }) => {
-      try {
-        const idea = await services.AhaService.createIdeaWithCategory(params.productId, params.ideaData);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Idea with category successfully created in product ${params.productId}:\n\n${JSON.stringify(idea, null, 2)}`
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error creating idea with category: ${error instanceof Error ? error.message : String(error)}`
-            }
-          ],
-          isError: true
-        };
-      }
+    async (params: { productId: string; ideaData: any }, { meta }: any = {}) => {
+      return withCredentials(meta, async (service) => {
+        try {
+          const idea = await service.createIdeaWithCategory(params.productId, params.ideaData);
+          return { content: [{ type: "text" as const, text: `Idea created:\n\n${JSON.stringify(idea, null, 2)}` }] };
+        } catch (error) {
+          return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        }
+      });
     }
   );
 
-  // Create idea with score tool
+  // Create idea with score
   server.tool(
     "aha_create_idea_with_score",
     "Create an idea with a score in a product in Aha.io",
     {
-      productId: z.string().describe("ID of the product"),
-      ideaData: z.object({
-        idea: z.object({
-          name: z.string().describe("Name of the idea"),
-          description: z.string().optional().describe("Description of the idea"),
-          score: z.number().describe("Score for the idea"),
-          skip_portal: z.boolean().optional().describe("Skip portal submission (default: false)")
-        }).describe("Idea data object")
-      }).describe("Idea creation data with score")
+      productId: z.string(),
+      ideaData: z.object({ idea: z.object({ name: z.string(), description: z.string().optional(), score: z.number(), skip_portal: z.boolean().optional() }) })
     },
-    async (params: { productId: string; ideaData: any }) => {
-      try {
-        const idea = await services.AhaService.createIdeaWithScore(params.productId, params.ideaData);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Idea with score successfully created in product ${params.productId}:\n\n${JSON.stringify(idea, null, 2)}`
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error creating idea with score: ${error instanceof Error ? error.message : String(error)}`
-            }
-          ],
-          isError: true
-        };
-      }
+    async (params: { productId: string; ideaData: any }, { meta }: any = {}) => {
+      return withCredentials(meta, async (service) => {
+        try {
+          const idea = await service.createIdeaWithScore(params.productId, params.ideaData);
+          return { content: [{ type: "text" as const, text: `Idea created:\n\n${JSON.stringify(idea, null, 2)}` }] };
+        } catch (error) {
+          return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        }
+      });
     }
   );
 
-  // Delete idea tool
+  // Delete idea
   server.tool(
     "aha_delete_idea",
     "Delete an idea in Aha.io",
-    {
-      ideaId: z.string().describe("ID of the idea")
-    },
-    async (params: { ideaId: string }) => {
-      try {
-        await services.AhaService.deleteIdea(params.ideaId);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Idea ${params.ideaId} successfully deleted`
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error deleting idea: ${error instanceof Error ? error.message : String(error)}`
-            }
-          ],
-          isError: true
-        };
-      }
+    { ideaId: z.string() },
+    async (params: { ideaId: string }, { meta }: any = {}) => {
+      return withCredentials(meta, async (service) => {
+        try {
+          await service.deleteIdea(params.ideaId);
+          return { content: [{ type: "text" as const, text: `Idea ${params.ideaId} deleted` }] };
+        } catch (error) {
+          return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        }
+      });
     }
   );
 
-  // ============================
-  // COMPETITOR CRUD TOOLS (PHASE 8B.1)
-  // ============================
-
-  // Create competitor tool
+  // Create competitor
   server.tool(
     "aha_create_competitor",
     "Create a competitor in a product in Aha.io",
     {
-      productId: z.string().describe("ID of the product"),
-      competitorData: z.object({
-        competitor: z.object({
-          name: z.string().describe("Name of the competitor"),
-          description: z.string().optional().describe("Description of the competitor"),
-          website: z.string().optional().describe("Website URL of the competitor")
-        }).describe("Competitor data object")
-      }).describe("Competitor creation data")
+      productId: z.string(),
+      competitorData: z.object({ competitor: z.object({ name: z.string(), description: z.string().optional(), website: z.string().optional() }) })
     },
-    async (params: { productId: string; competitorData: any }) => {
-      try {
-        const competitor = await services.AhaService.createCompetitor(params.productId, params.competitorData);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Competitor successfully created in product ${params.productId}:\n\n${JSON.stringify(competitor, null, 2)}`
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error creating competitor: ${error instanceof Error ? error.message : String(error)}`
-            }
-          ],
-          isError: true
-        };
-      }
+    async (params: { productId: string; competitorData: any }, { meta }: any = {}) => {
+      return withCredentials(meta, async (service) => {
+        try {
+          const competitor = await service.createCompetitor(params.productId, params.competitorData);
+          return { content: [{ type: "text" as const, text: `Competitor created:\n\n${JSON.stringify(competitor, null, 2)}` }] };
+        } catch (error) {
+          return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        }
+      });
     }
   );
 
-  // Update competitor tool
+  // Update competitor
   server.tool(
     "aha_update_competitor",
     "Update a competitor in Aha.io",
     {
-      competitorId: z.string().describe("ID of the competitor"),
-      competitorData: z.object({
-        competitor: z.object({
-          name: z.string().optional().describe("Name of the competitor"),
-          description: z.string().optional().describe("Description of the competitor"),
-          website: z.string().optional().describe("Website URL of the competitor")
-        }).describe("Competitor data object")
-      }).describe("Competitor update data")
+      competitorId: z.string(),
+      competitorData: z.object({ competitor: z.object({ name: z.string().optional(), description: z.string().optional(), website: z.string().optional() }) })
     },
-    async (params: { competitorId: string; competitorData: any }) => {
-      try {
-        const competitor = await services.AhaService.updateCompetitor(params.competitorId, params.competitorData);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Competitor ${params.competitorId} successfully updated:\n\n${JSON.stringify(competitor, null, 2)}`
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error updating competitor: ${error instanceof Error ? error.message : String(error)}`
-            }
-          ],
-          isError: true
-        };
-      }
+    async (params: { competitorId: string; competitorData: any }, { meta }: any = {}) => {
+      return withCredentials(meta, async (service) => {
+        try {
+          const competitor = await service.updateCompetitor(params.competitorId, params.competitorData);
+          return { content: [{ type: "text" as const, text: `Competitor updated:\n\n${JSON.stringify(competitor, null, 2)}` }] };
+        } catch (error) {
+          return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        }
+      });
     }
   );
 
-  // Delete competitor tool
+  // Delete competitor
   server.tool(
     "aha_delete_competitor",
     "Delete a competitor in Aha.io",
-    {
-      competitorId: z.string().describe("ID of the competitor")
-    },
-    async (params: { competitorId: string }) => {
-      try {
-        await services.AhaService.deleteCompetitor(params.competitorId);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Competitor ${params.competitorId} successfully deleted`
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error deleting competitor: ${error instanceof Error ? error.message : String(error)}`
-            }
-          ],
-          isError: true
-        };
-      }
+    { competitorId: z.string() },
+    async (params: { competitorId: string }, { meta }: any = {}) => {
+      return withCredentials(meta, async (service) => {
+        try {
+          await service.deleteCompetitor(params.competitorId);
+          return { content: [{ type: "text" as const, text: `Competitor ${params.competitorId} deleted` }] };
+        } catch (error) {
+          return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        }
+      });
     }
   );
 
-  // ============================
-  // INITIATIVE ENHANCEMENT TOOLS (PHASE 8B.2)
-  // ============================
-
-  // ============================
-  // PORTAL INTEGRATION & ADVANCED FEATURES (PHASE 8C)
-  // ============================
-
-  // Create idea by portal user tool
+  // Create idea by portal user
   server.tool(
     "aha_create_idea_by_portal_user",
     "Create an idea by a portal user in Aha.io",
     {
-      productId: z.string().describe("ID of the product"),
+      productId: z.string(),
       ideaData: z.object({
         idea: z.object({
-          name: z.string().describe("Name of the idea"),
-          description: z.string().optional().describe("Description of the idea"),
-          submitted_idea_portal_id: z.string().optional().describe("ID of the ideas portal"),
-          skip_portal: z.boolean().optional().describe("Skip portal submission (default: false)"),
-          created_by_portal_user: z.object({
-            id: z.number().describe("ID of the portal user"),
-            name: z.string().describe("Name of the portal user")
-          }).describe("Portal user information")
-        }).describe("Idea data object")
-      }).describe("Idea creation data by portal user")
+          name: z.string(),
+          description: z.string().optional(),
+          submitted_idea_portal_id: z.string().optional(),
+          skip_portal: z.boolean().optional(),
+          created_by_portal_user: z.object({ id: z.number(), name: z.string() })
+        })
+      })
     },
-    async (params: { productId: string; ideaData: any }) => {
-      try {
-        const idea = await services.AhaService.createIdeaByPortalUser(params.productId, params.ideaData);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Idea by portal user successfully created in product ${params.productId}:\n\n${JSON.stringify(idea, null, 2)}`
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error creating idea by portal user: ${error instanceof Error ? error.message : String(error)}`
-            }
-          ],
-          isError: true
-        };
-      }
+    async (params: { productId: string; ideaData: any }, { meta }: any = {}) => {
+      return withCredentials(meta, async (service) => {
+        try {
+          const idea = await service.createIdeaByPortalUser(params.productId, params.ideaData);
+          return { content: [{ type: "text" as const, text: `Idea created:\n\n${JSON.stringify(idea, null, 2)}` }] };
+        } catch (error) {
+          return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        }
+      });
     }
   );
 
-  // Create idea with portal settings tool
+  // Create idea with portal settings
   server.tool(
     "aha_create_idea_with_portal_settings",
     "Create an idea with enhanced portal settings in Aha.io",
     {
-      productId: z.string().describe("ID of the product"),
+      productId: z.string(),
       ideaData: z.object({
         idea: z.object({
-          name: z.string().describe("Name of the idea"),
-          description: z.string().optional().describe("Description of the idea"),
-          submitted_idea_portal_id: z.string().optional().describe("ID of the ideas portal"),
-          skip_portal: z.boolean().optional().describe("Skip portal submission (default: false)"),
-          category: z.string().optional().describe("Category for the idea"),
-          score: z.number().optional().describe("Score for the idea")
-        }).describe("Idea data object")
-      }).describe("Idea creation data with portal settings")
+          name: z.string(),
+          description: z.string().optional(),
+          submitted_idea_portal_id: z.string().optional(),
+          skip_portal: z.boolean().optional(),
+          category: z.string().optional(),
+          score: z.number().optional()
+        })
+      })
     },
-    async (params: { productId: string; ideaData: any }) => {
-      try {
-        const idea = await services.AhaService.createIdeaWithPortalSettings(params.productId, params.ideaData);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Idea with portal settings successfully created in product ${params.productId}:\n\n${JSON.stringify(idea, null, 2)}`
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error creating idea with portal settings: ${error instanceof Error ? error.message : String(error)}`
-            }
-          ],
-          isError: true
-        };
-      }
+    async (params: { productId: string; ideaData: any }, { meta }: any = {}) => {
+      return withCredentials(meta, async (service) => {
+        try {
+          const idea = await service.createIdeaWithPortalSettings(params.productId, params.ideaData);
+          return { content: [{ type: "text" as const, text: `Idea created:\n\n${JSON.stringify(idea, null, 2)}` }] };
+        } catch (error) {
+          return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        }
+      });
     }
   );
 
-  // Register sync tools for background synchronization and observability
+  // Register sync and embedding tools
   registerSyncTools(server);
-  
-  // Register embedding tools for semantic search capabilities
   registerEmbeddingTools(server);
 }
