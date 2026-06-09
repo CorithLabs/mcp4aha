@@ -1,130 +1,94 @@
-import { describe, it, expect, beforeEach, mock } from "bun:test";
-import { Request, Response, NextFunction } from "express";
-import { bearerAuth, isAuthEnabled } from "./auth.js";
+import { describe, it, expect, mock, beforeEach } from 'bun:test';
+import { Request, Response, NextFunction } from 'express';
 
-// Mock express request and response
-const mockRequest = (headers: Record<string, string> = {}): Request => ({
-  headers,
-} as Request);
+let storedToken: string | null = 'valid-token-abc123';
 
-const mockResponse = (): Response => {
-  const res = {} as Response;
-  res.status = mock(() => res);
-  res.json = mock(() => res);
+mock.module('../../src/core/database/database.js', () => ({
+  databaseService: {
+    getConfig: mock(async (key: string) => {
+      if (key === 'mcp_auth_token') return storedToken;
+      return null;
+    }),
+  },
+}));
+
+// Import after mock
+const { bearerAuth } = await import('../../src/server/middleware/auth.js');
+
+function makeReq(headers: Record<string, string> = {}): Partial<Request> {
+  return { headers } as any;
+}
+
+function makeRes(): { status: any; json: any; _status: number; _body: any } {
+  const res: any = {};
+  res.json = mock((body: any) => { res._body = body; return res; });
+  res.status = mock((code: number) => { res._status = code; return res; });
   return res;
-};
+}
 
-const mockNext = (): NextFunction => mock(() => {});
+describe('bearerAuth', () => {
+  const next: NextFunction = mock(() => {});
 
-describe("Bearer Authentication Middleware", () => {
   beforeEach(() => {
-    // Clear environment variables
-    delete process.env.MCP_AUTH_TOKEN;
+    storedToken = 'valid-token-abc123';
+    (next as any).mockReset?.();
   });
 
-  describe("bearerAuth", () => {
-    it("should allow requests when no auth token is configured", () => {
-      const req = mockRequest();
-      const res = mockResponse();
-      const next = mockNext();
-
-      bearerAuth(req, res, next);
-
-      expect(next).toHaveBeenCalled();
-      expect(res.status).not.toHaveBeenCalled();
-    });
-
-    it("should return 401 when auth token is configured but no Authorization header", () => {
-      process.env.MCP_AUTH_TOKEN = "test-token";
-      
-      const req = mockRequest();
-      const res = mockResponse();
-      const next = mockNext();
-
-      bearerAuth(req, res, next);
-
-      expect(res.status).toHaveBeenCalledWith(401);
-      expect(res.json).toHaveBeenCalledWith({
-        error: "Authorization header required",
-        message: "Please provide a valid Bearer token in the Authorization header"
-      });
-      expect(next).not.toHaveBeenCalled();
-    });
-
-    it("should return 401 when Authorization header doesn't start with Bearer", () => {
-      process.env.MCP_AUTH_TOKEN = "test-token";
-      
-      const req = mockRequest({ authorization: "Basic dGVzdDp0ZXN0" });
-      const res = mockResponse();
-      const next = mockNext();
-
-      bearerAuth(req, res, next);
-
-      expect(res.status).toHaveBeenCalledWith(401);
-      expect(res.json).toHaveBeenCalledWith({
-        error: "Invalid authorization format",
-        message: "Authorization header must use Bearer token format: 'Bearer <token>'"
-      });
-      expect(next).not.toHaveBeenCalled();
-    });
-
-    it("should return 401 when token is invalid", () => {
-      process.env.MCP_AUTH_TOKEN = "test-token";
-      
-      const req = mockRequest({ authorization: "Bearer wrong-token" });
-      const res = mockResponse();
-      const next = mockNext();
-
-      bearerAuth(req, res, next);
-
-      expect(res.status).toHaveBeenCalledWith(401);
-      expect(res.json).toHaveBeenCalledWith({
-        error: "Invalid token",
-        message: "The provided Bearer token is invalid"
-      });
-      expect(next).not.toHaveBeenCalled();
-    });
-
-    it("should allow requests when token is valid", () => {
-      process.env.MCP_AUTH_TOKEN = "test-token";
-      
-      const req = mockRequest({ authorization: "Bearer test-token" });
-      const res = mockResponse();
-      const next = mockNext();
-
-      bearerAuth(req, res, next);
-
-      expect(next).toHaveBeenCalled();
-      expect(res.status).not.toHaveBeenCalled();
-    });
-
-    it("should handle case-sensitive token comparison", () => {
-      process.env.MCP_AUTH_TOKEN = "Test-Token";
-      
-      const req = mockRequest({ authorization: "Bearer test-token" });
-      const res = mockResponse();
-      const next = mockNext();
-
-      bearerAuth(req, res, next);
-
-      expect(res.status).toHaveBeenCalledWith(401);
-      expect(next).not.toHaveBeenCalled();
-    });
+  it('returns 503 when no token is configured', async () => {
+    storedToken = null;
+    const req = makeReq();
+    const res = makeRes();
+    await bearerAuth(req as Request, res as unknown as Response, next);
+    expect(res._status).toBe(503);
   });
 
-  describe("isAuthEnabled", () => {
-    it("should return false when no auth token is configured", () => {
-      expect(isAuthEnabled()).toBe(false);
-    });
+  it('returns 401 when Authorization header is missing', async () => {
+    const req = makeReq();
+    const res = makeRes();
+    await bearerAuth(req as Request, res as unknown as Response, next);
+    expect(res._status).toBe(401);
+  });
 
-    it("should return true when auth token is configured in environment", () => {
-      process.env.MCP_AUTH_TOKEN = "test-token";
-      expect(isAuthEnabled()).toBe(true);
-    });
+  it('returns 401 when token does not match', async () => {
+    const req = makeReq({ authorization: 'Bearer wrong-token' });
+    const res = makeRes();
+    await bearerAuth(req as Request, res as unknown as Response, next);
+    expect(res._status).toBe(401);
+  });
 
-    it("should return false when auth token is empty string", () => {
-      process.env.MCP_AUTH_TOKEN = "";
-      expect(isAuthEnabled()).toBe(false);
+  it('calls next() when token is valid', async () => {
+    const req = makeReq({ authorization: 'Bearer valid-token-abc123' });
+    const res = makeRes();
+    await bearerAuth(req as Request, res as unknown as Response, next);
+    expect(next).toHaveBeenCalled();
+  });
+
+  it('attaches ahaApiKey to req when X-Aha-Api-Key header present', async () => {
+    const req = makeReq({
+      authorization: 'Bearer valid-token-abc123',
+      'x-aha-api-key': 'my-aha-key',
     });
+    const res = makeRes();
+    await bearerAuth(req as Request, res as unknown as Response, next);
+    expect((req as any).ahaApiKey).toBe('my-aha-key');
+  });
+
+  it('does not log Aha API key value', async () => {
+    // Verify no console.log calls contain the API key — structural check
+    const consoleSpy = mock((...args: any[]) => {});
+    const origLog = console.log;
+    console.log = consoleSpy;
+
+    const req = makeReq({
+      authorization: 'Bearer valid-token-abc123',
+      'x-aha-api-key': 'super-secret-key',
+    });
+    const res = makeRes();
+    await bearerAuth(req as Request, res as unknown as Response, next);
+
+    const loggedContent = consoleSpy.mock.calls.map(c => JSON.stringify(c)).join('');
+    expect(loggedContent).not.toContain('super-secret-key');
+
+    console.log = origLog;
   });
 });
