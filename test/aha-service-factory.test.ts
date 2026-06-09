@@ -1,4 +1,4 @@
-import { describe, it, expect, mock } from 'bun:test';
+import { describe, it, expect, mock, beforeEach } from 'bun:test';
 
 let mockCompany: string | null = 'mycompany';
 
@@ -22,22 +22,25 @@ const { createAhaService, MissingCredentialsError, ConfigurationError } =
   await import('../src/core/services/aha-service-factory.js');
 
 describe('createAhaService', () => {
+  beforeEach(() => {
+    mockCompany = 'mycompany';
+    delete process.env.AHA_COMPANY;
+  });
+
   it('throws MissingCredentialsError when apiKey is empty', async () => {
-    expect(createAhaService('')).rejects.toBeInstanceOf(MissingCredentialsError);
+    await expect(createAhaService('')).rejects.toBeInstanceOf(MissingCredentialsError);
   });
 
   it('throws MissingCredentialsError when apiKey is blank whitespace', async () => {
-    expect(createAhaService('   ')).rejects.toBeInstanceOf(MissingCredentialsError);
+    await expect(createAhaService('   ')).rejects.toBeInstanceOf(MissingCredentialsError);
   });
 
   it('throws ConfigurationError when subdomain is not set', async () => {
     mockCompany = null;
-    delete process.env.AHA_COMPANY;
-    expect(createAhaService('valid-key')).rejects.toBeInstanceOf(ConfigurationError);
+    await expect(createAhaService('valid-key')).rejects.toBeInstanceOf(ConfigurationError);
   });
 
   it('returns AhaService when credentials are valid', async () => {
-    mockCompany = 'mycompany';
     const service = await createAhaService('valid-api-key');
     expect(service).toBeDefined();
     expect(typeof service.listFeatures).toBe('function');
