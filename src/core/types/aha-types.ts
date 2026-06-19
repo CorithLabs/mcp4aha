@@ -5,6 +5,39 @@
 import { User, Epic, Feature } from '@cedricziel/aha-js';
 
 /**
+ * Generic paginated search result wrapper.
+ * Used by searchIdeas, searchEpics, searchFeatures.
+ */
+export interface AhaPagination {
+  total_records?: number;
+  total_pages?: number;
+  current_page?: number;
+}
+
+export interface AhaSearchResult<T> {
+  records: T[];
+  pagination: AhaPagination;
+}
+
+/**
+ * Idea ranking / score breakdown.
+ * Returned by getIdeaRanking and updateIdeaRanking.
+ */
+export interface AhaScoreFact {
+  name: string;
+  value: number;
+  description?: string;
+}
+
+export interface AhaIdeaRanking {
+  id: string;
+  name?: string;
+  score?: number;
+  position?: number | null;
+  score_facts: AhaScoreFact[];
+}
+
+/**
  * Release entity (not available in SDK)
  */
 export interface Release {
@@ -79,38 +112,22 @@ export interface Product {
  */
 export interface ReleasesListResponse {
   releases?: Release[];
-  pagination?: {
-    total_records?: number;
-    total_pages?: number;
-    current_page?: number;
-  };
+  pagination?: AhaPagination;
 }
 
 export interface ReleasesPhasesListResponse {
   release_phases?: ReleasePhase[];
-  pagination?: {
-    total_records?: number;
-    total_pages?: number;
-    current_page?: number;
-  };
+  pagination?: AhaPagination;
 }
 
 export interface GoalsListResponse {
   goals?: Goal[];
-  pagination?: {
-    total_records?: number;
-    total_pages?: number;
-    current_page?: number;
-  };
+  pagination?: AhaPagination;
 }
 
 export interface UsersListResponse {
   users?: User[];
-  pagination?: {
-    total_records?: number;
-    total_pages?: number;
-    current_page?: number;
-  };
+  pagination?: AhaPagination;
 }
 
 /**
@@ -118,29 +135,17 @@ export interface UsersListResponse {
  */
 export interface ReleaseFeaturesResponse {
   features?: Feature[];
-  pagination?: {
-    total_records?: number;
-    total_pages?: number;
-    current_page?: number;
-  };
+  pagination?: AhaPagination;
 }
 
 export interface ReleaseEpicsResponse {
   epics?: Epic[];
-  pagination?: {
-    total_records?: number;
-    total_pages?: number;
-    current_page?: number;
-  };
+  pagination?: AhaPagination;
 }
 
 export interface GoalEpicsResponse {
   epics?: Epic[];
-  pagination?: {
-    total_records?: number;
-    total_pages?: number;
-    current_page?: number;
-  };
+  pagination?: AhaPagination;
 }
 
 /**
@@ -157,11 +162,7 @@ export interface IdeasByProductResponse {
     url?: string;
     resource?: string;
   }>;
-  pagination?: {
-    total_records?: number;
-    total_pages?: number;
-    current_page?: number;
-  };
+  pagination?: AhaPagination;
 }
 
 /**
@@ -205,20 +206,12 @@ export interface Todo {
  */
 export interface RequirementsListResponse {
   requirements?: Requirement[];
-  pagination?: {
-    total_records?: number;
-    total_pages?: number;
-    current_page?: number;
-  };
+  pagination?: AhaPagination;
 }
 
 export interface TodosListResponse {
   todos?: Todo[];
-  pagination?: {
-    total_records?: number;
-    total_pages?: number;
-    current_page?: number;
-  };
+  pagination?: AhaPagination;
 }
 
 /**
@@ -244,9 +237,5 @@ export interface Competitor {
  */
 export interface CompetitorsListResponse {
   competitors?: Competitor[];
-  pagination?: {
-    total_records?: number;
-    total_pages?: number;
-    current_page?: number;
-  };
+  pagination?: AhaPagination;
 }

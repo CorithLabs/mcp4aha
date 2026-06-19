@@ -43,7 +43,9 @@ import type {
   Todo,
   ReleaseFeaturesResponse,
   GoalEpicsResponse,
-  CompetitorsListResponse
+  CompetitorsListResponse,
+  AhaSearchResult,
+  AhaIdeaRanking,
 } from '../types/aha-types.js';
 
 // Mock data generators
@@ -138,6 +140,15 @@ const generateMockIdea = (index: number) => ({
     created_at: '2024-01-01T00:00:00Z'
   }
 });
+
+const generateMockEpic = (index: number): Epic => ({
+  id: `EPIC-${index}`,
+  reference_num: `EPIC-${index}`,
+  name: `Test Epic ${index}`,
+  created_at: '2024-01-01T00:00:00Z',
+} as Epic);
+
+const MOCK_PAGINATION = { total_records: 2, total_pages: 1, current_page: 1 };
 
 /**
  * Mock implementation of AhaService for testing
@@ -343,6 +354,78 @@ export class MockAhaService implements IAhaService {
   async getIdea(_ideaId: string): Promise<IdeaResponse> {
     return generateMockIdea(1) as IdeaResponse;
   }
+
+  // ─── Text Search ───────────────────────────────────────────────────────────
+
+  async searchIdeas(params: { q: string; page?: number; per_page?: number }): Promise<AhaSearchResult<IdeaResponse>> {
+    const matches = params.q.toLowerCase().includes('test');
+    return {
+      records: matches
+        ? [generateMockIdea(1) as IdeaResponse, generateMockIdea(2) as IdeaResponse]
+        : [],
+      pagination: { ...MOCK_PAGINATION, total_records: matches ? 2 : 0 },
+    };
+  }
+
+  async searchEpics(params: { q: string; page?: number; per_page?: number }): Promise<AhaSearchResult<Epic>> {
+    const matches = params.q.toLowerCase().includes('test');
+    return {
+      records: matches ? [generateMockEpic(1)] : [],
+      pagination: { ...MOCK_PAGINATION, total_records: matches ? 1 : 0 },
+    };
+  }
+
+  async searchFeatures(params: { q: string; page?: number; per_page?: number }): Promise<AhaSearchResult<Feature>> {
+    const matches = params.q.toLowerCase().includes('test');
+    return {
+      records: matches
+        ? [generateMockFeature(1), generateMockFeature(2)]
+        : [],
+      pagination: { ...MOCK_PAGINATION, total_records: matches ? 2 : 0 },
+    };
+  }
+
+  // ─── Idea Ranking ──────────────────────────────────────────────────────────
+
+  async getIdeaRanking(ideaId: string): Promise<AhaIdeaRanking> {
+    if (ideaId === 'test-idea-unranked') {
+      return { id: ideaId, name: 'Unranked Idea', score: 0, position: null, score_facts: [] };
+    }
+    if (ideaId === 'test-idea-1' || ideaId === 'IDEA-1') {
+      return {
+        id: ideaId,
+        name: 'Test Idea 1',
+        score: 85,
+        position: 3,
+        score_facts: [
+          { name: 'Impact', value: 50, description: 'Customer impact score' },
+          { name: 'Effort', value: 35, description: 'Engineering effort estimate' },
+        ],
+      };
+    }
+    throw new Error(`Idea ${ideaId} not found`);
+  }
+
+  async updateIdeaRanking(
+    ideaId: string,
+    params: { score_facts?: Array<{ name: string; value: number }>; position?: number }
+  ): Promise<AhaIdeaRanking> {
+    if (ideaId === 'test-idea-invalid') {
+      throw new Error('Validation failed: { "position": ["must be a positive integer"] }');
+    }
+    if (ideaId !== 'test-idea-1' && ideaId !== 'IDEA-1') {
+      throw new Error(`Idea ${ideaId} not found`);
+    }
+    return {
+      id: ideaId,
+      name: 'Test Idea 1',
+      score: params.score_facts ? params.score_facts.reduce((s, f) => s + f.value, 0) : 85,
+      position: params.position ?? 3,
+      score_facts: params.score_facts ?? [{ name: 'Impact', value: 50 }, { name: 'Effort', value: 35 }],
+    };
+  }
+
+  // ─── Users ─────────────────────────────────────────────────────────────────
 
   async listUsers(): Promise<{ users: User[] }> {
     return {
