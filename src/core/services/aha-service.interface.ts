@@ -44,7 +44,9 @@ import type {
   Todo,
   ReleaseFeaturesResponse,
   GoalEpicsResponse,
-  CompetitorsListResponse
+  CompetitorsListResponse,
+  AhaSearchResult,
+  AhaIdeaRanking,
 } from '../types/aha-types.js';
 
 export interface IAhaService {
@@ -156,6 +158,18 @@ export interface IAhaService {
     ideaUserId?: string
   ): Promise<IdeasListResponse>;
   getIdea(ideaId: string): Promise<IdeaResponse>;
+
+  // Text search
+  searchIdeas(params: { q: string; page?: number; per_page?: number }): Promise<AhaSearchResult<IdeaResponse>>;
+  searchEpics(params: { q: string; page?: number; per_page?: number }): Promise<AhaSearchResult<Epic>>;
+  searchFeatures(params: { q: string; page?: number; per_page?: number }): Promise<AhaSearchResult<Feature>>;
+
+  // Idea Ranking
+  getIdeaRanking(ideaId: string): Promise<AhaIdeaRanking>;
+  updateIdeaRanking(
+    ideaId: string,
+    params: { score_facts?: Array<{ name: string; value: number }>; position?: number }
+  ): Promise<AhaIdeaRanking>;
 
   // Users
   listUsers(): Promise<{ users: User[] }>;
