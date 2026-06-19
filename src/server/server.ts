@@ -1,6 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerResources } from "../core/resources.js";
 import { registerTools } from "../core/tools.js";
+import { registerFetchTools } from "../core/tools/fetch-tools.js";
+import { registerSearchTools } from "../core/tools/search-tools.js";
 import { registerPrompts } from "../core/prompts.js";
 import { registerSampling } from "../core/sampling.js";
 import { readFileSync } from "fs";
@@ -299,6 +301,8 @@ async function startServer() {
     // Register all resources, tools, prompts, and sampling
     registerResources(server);
     registerTools(server);
+    registerFetchTools(server);   // aha_get_idea, aha_get_epic, aha_get_feature
+    registerSearchTools(server);  // aha_search_ideas, aha_search_epics, aha_search_features
     registerPrompts(server);
     registerSampling(server);
     
@@ -316,7 +320,7 @@ async function startServer() {
       arch: process.arch,
       working_directory: process.cwd(),
       capabilities: {
-        tools: 40,
+        tools: 50,
         resources: '40+',
         prompts: 12,
         features: [
@@ -324,7 +328,9 @@ async function startServer() {
           'dual-transport',
           'full-crud', 
           'health-checks',
-          'runtime-config'
+          'runtime-config',
+          'fetch-by-id',
+          'text-search'
         ]
       }
     });
@@ -357,4 +363,4 @@ async function startServer() {
 export { performHealthCheck, serverStatus };
 
 // Export the server creation function
-export default startServer; 
+export default startServer;
